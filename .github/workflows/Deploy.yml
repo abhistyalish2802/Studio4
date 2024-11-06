@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: Docker Deployment Pipeline
 
 on:
   push:
@@ -13,19 +13,43 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
         with:
-          node-version: '14'
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Install dependencies
-        run: npm install
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/my-app:latest .
+          docker push ${{ secrets.DOCKER_USERNAME }}/my-app:latest
 
-      - name: Run tests
-        run: npm test
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
 
-      - name: Lint code
-        run: npm run lint
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Pull Docker image on server and restart container
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/my-app:latest
+        run: |
+          echo "$SSH_PRIVATE_KEY" | ssh-add -
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST << EOF
+            docker pull $IMAGE_NAME
+            docker stop my-app || true
+            docker rm my-app || true
+            docker run -d --name my-app -p 80:80 $IMAGE_NAME
+EOF
